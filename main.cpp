@@ -3,20 +3,40 @@
 using namespace cv;
 int main(int argc, char** argv )
 {
-    if ( argc != 2 )
-    {
-        printf("usage: DisplayImage.out <Image_Path>\n");
-        return -1;
+    if (argc < 2) {
+        printf("not enough argument\n");
+        exit(1);
     }
-    Mat image;
-    image = imread( argv[1], 1 );
-    if ( !image.data )
+
+    //file load
+    VideoCapture capture(argv[1]);
+    Mat frame;
+
+    //check
+    if (!capture.isOpened())
     {
-        printf("No image data \n");
-        return -1;
+        printf("AVI file can not open.\n");
+        return;
     }
-    namedWindow("Display Image", WINDOW_AUTOSIZE );
-    imshow("Display Image", image);
-    waitKey(0);
+
+    //create window
+    namedWindow("w");
+
+    while (1)
+    {
+        //grab frame from file & throw to Mat
+        capture >> frame;
+        if (frame.empty()) //Is video end?
+            break;
+
+        //processing example
+        Sobel(frame, frame, frame.depth(), 1, 0);
+        ////////////////////
+
+        //display and delay
+        imshow("w", frame);
+        if (waitKey(10) > 0)
+            break;
+    }
     return 0;
 }
