@@ -1,190 +1,336 @@
-// gcc -o keytest egl_key_event.c -I. -lwayland-client -lwayland-server -lwayland-egl -lEGL -lGLESv2
-
+// gcc -o key_test egl_key_event.c -I. -lwayland-client -lwayland-server -lwayland-egl -lEGL -lGLESv2
 #include <stdio.h>
-#include <unistd.h>
-#include <errno.h>
-#include <regex.h>
-#include <dirent.h>
-#include <fcntl.h>
-#include <linux/input.h>
-#include <stdbool.h>
+#include <stdlib.h>
+#include <string.h>
+#include <linux/input.h> // for keyboard
+#include <wayland-client.h>
+#include <wayland-server.h>
+#include <wayland-client-protocol.h>
+#include <wayland-egl.h>
+#include <EGL/egl.h>
+#include <GLES2/gl2.h>
 
-bool Input(void)
+struct wl_display *display = NULL;
+struct wl_compositor *compositor = NULL;
+struct wl_surface *surface;
+struct wl_egl_window *egl_window;
+struct wl_region *region;
+struct wl_callback *callback;
+struct wl_shell *shell;
+struct wl_shell_surface *shell_surface;
+
+// input devices
+struct wl_seat *seat;
+struct wl_keyboard *keyboard;
+
+EGLDisplay egl_display;
+EGLConfig egl_conf;
+EGLSurface egl_surface;
+EGLContext egl_context;
+
+static void
+keyboard_handle_keymap(void *data, struct wl_keyboard *keyboard,
+                       uint32_t format, int fd, uint32_t size)
 {
-    static int first = 1;
-    static int mouseFd = -1;
-    static int keyboardFd = -1;
-    struct input_event ev[64];
-    int rd;
-
-    bool ret = false;
-
-    // Set up the devices on the first call
-    if (first)
-    {
-        DIR *dirp;
-        struct dirent *dp;
-        regex_t kbd, mouse;
-
-        char fullPath[1024];
-        static char *dirName = "/dev/input/by-id";
-        int result;
-
-        if (regcomp(&kbd, "event-kbd", 0) != 0)
-        {
-            printf("regcomp for kbd failed\n");
-            return true;
-        }
-        if (regcomp(&mouse, "event-mouse", 0) != 0)
-        {
-            printf("regcomp for mouse failed\n");
-            return true;
-        }
-
-        if ((dirp = opendir(dirName)) == NULL)
-        {
-            perror("couldn't open '/dev/input/by-id'");
-            return true;
-        }
-
-        // Find any files that match the regex for keyboard or mouse
-
-        do
-        {
-            errno = 0;
-            if ((dp = readdir(dirp)) != NULL)
-            {
-                printf("readdir (%s)\n", dp->d_name);
-                if (regexec(&kbd, dp->d_name, 0, NULL, 0) == 0)
-                {
-                    printf("match for the kbd = %s\n", dp->d_name);
-                    sprintf(fullPath, "%s/%s", dirName, dp->d_name);
-                    keyboardFd = open(fullPath, O_RDONLY | O_NONBLOCK);
-                    printf("%s Fd = %d\n", fullPath, keyboardFd);
-                    printf("Getting exclusive access: ");
-                    result = ioctl(keyboardFd, EVIOCGRAB, 1);
-                    printf("%s\n", (result == 0) ? "SUCCESS" : "FAILURE");
-                }
-                if (regexec(&mouse, dp->d_name, 0, NULL, 0) == 0)
-                {
-                    printf("match for the kbd = %s\n", dp->d_name);
-                    sprintf(fullPath, "%s/%s", dirName, dp->d_name);
-                    mouseFd = open(fullPath, O_RDONLY | O_NONBLOCK);
-                    printf("%s Fd = %d\n", fullPath, mouseFd);
-                    printf("Getting exclusive access: ");
-                    result = ioctl(mouseFd, EVIOCGRAB, 1);
-                    printf("%s\n", (result == 0) ? "SUCCESS" : "FAILURE");
-                }
-            }
-        } while (dp != NULL);
-
-        closedir(dirp);
-
-        regfree(&kbd);
-        regfree(&mouse);
-
-        first = 0;
-        if ((keyboardFd == -1) || (mouseFd == -1))
-            return true;
-    }
-
-    // Read events from mouse
-
-    rd = read(mouseFd, ev, sizeof(ev));
-    if (rd > 0)
-    {
-        int count, n;
-        struct input_event *evp;
-
-        count = rd / sizeof(struct input_event);
-        n = 0;
-        while (count--)
-        {
-            evp = &ev[n++];
-            if (evp->type == 1)
-            {
-
-                if (evp->code == BTN_LEFT)
-                {
-                    if (evp->value == 1) // Press
-                    {
-                        printf("Left button pressed\n");
-                    }
-                    else
-                    {
-                        printf("Left button released\n");
-                    }
-                }
-            }
-
-            if (evp->type == 2)
-            {
-
-                if (evp->code == 0)
-                {
-                    // Mouse Left/Right
-
-                    printf("Mouse moved left/right %d\n", evp->value);
-                }
-
-                if (evp->code == 1)
-                {
-                    // Mouse Up/Down
-                    printf("Mouse moved up/down %d\n", evp->value);
-                }
-            }
-        }
-    }
-
-    // Read events from keyboard
-
-    rd = read(keyboardFd, ev, sizeof(ev));
-    if (rd > 0)
-    {
-        int count, n;
-        struct input_event *evp;
-
-        count = rd / sizeof(struct input_event);
-        n = 0;
-        while (count--)
-        {
-            evp = &ev[n++];
-            if (evp->type == 1)
-            {
-                if (evp->value == 1)
-                {
-                    if (evp->code == KEY_LEFTCTRL)
-                    {
-                        printf("Left Control key pressed\n");
-                    }
-                    if (evp->code == KEY_LEFTMETA)
-                    {
-                        printf("Left Meta key pressed\n");
-                    }
-                    if (evp->code == KEY_LEFTSHIFT)
-                    {
-                        printf("Left Shift key pressed\n");
-                    }
-                }
-
-                if ((evp->code == KEY_Q) && (evp->value == 1))
-                    ret = true;
-            }
-        }
-    }
-
-    return (ret);
 }
 
-int main(int argc, char **argv)
+static void
+keyboard_handle_enter(void *data, struct wl_keyboard *keyboard,
+                      uint32_t serial, struct wl_surface *surface,
+                      struct wl_array *keys)
 {
-    int loops;
+    fprintf(stderr, "Keyboard gained focus\n");
+}
 
-    while (Input() == false)
-    {
-        loops += 1;
+static void
+keyboard_handle_leave(void *data, struct wl_keyboard *keyboard,
+                      uint32_t serial, struct wl_surface *surface)
+{
+    fprintf(stderr, "Keyboard lost focus\n");
+}
+
+static void
+keyboard_handle_key(void *data, struct wl_keyboard *keyboard,
+                    uint32_t serial, uint32_t time, uint32_t key,
+                    uint32_t state)
+{
+    fprintf(stderr, "Key is %d state is %d\n", key, state);
+}
+
+static void
+keyboard_handle_modifiers(void *data, struct wl_keyboard *keyboard,
+                          uint32_t serial, uint32_t mods_depressed,
+                          uint32_t mods_latched, uint32_t mods_locked,
+                          uint32_t group)
+{
+    fprintf(stderr, "Modifiers depressed %d, latched %d, locked %d, group %d\n",
+	    mods_depressed, mods_latched, mods_locked, group);
+}
+
+static const struct wl_keyboard_listener keyboard_listener = {
+    keyboard_handle_keymap,
+    keyboard_handle_enter,
+    keyboard_handle_leave,
+    keyboard_handle_key,
+    keyboard_handle_modifiers,
+};
+
+
+static void
+seat_handle_capabilities(void *data, struct wl_seat *seat,
+                         enum wl_seat_capability caps)
+{
+    if (caps & WL_SEAT_CAPABILITY_KEYBOARD) {
+	keyboard = wl_seat_get_keyboard(seat);
+	wl_keyboard_add_listener(keyboard, &keyboard_listener, NULL);
+    } else if (!(caps & WL_SEAT_CAPABILITY_KEYBOARD)) {
+	wl_keyboard_destroy(keyboard);
+	keyboard = NULL;
     }
-    printf(" %d loops \n", loops);
 
-    return (1);
+
+}
+
+static const struct wl_seat_listener seat_listener = {
+    seat_handle_capabilities,
+};
+
+void
+global_registry_handler(void *data, struct wl_registry *registry, uint32_t id,
+			const char *interface, uint32_t version)
+{
+    printf("Got a registry event for %s id %d\n", interface, id);
+    if (strcmp(interface, "wl_compositor") == 0) {
+        compositor = wl_registry_bind(registry, 
+				      id, 
+				      &wl_compositor_interface, 
+				      1);
+    } else if (strcmp(interface, "wl_shell") == 0) {
+	shell = wl_registry_bind(registry, id,
+				 &wl_shell_interface, 1);
+	
+    } else if (strcmp(interface, "wl_seat") == 0) {
+	seat = wl_registry_bind(registry, id,
+				&wl_seat_interface, 1);
+	wl_seat_add_listener(seat, &seat_listener, NULL);
+    }
+}
+
+static void
+global_registry_remover(void *data, struct wl_registry *registry, uint32_t id)
+{
+    printf("Got a registry losing event for %d\n", id);
+}
+
+static const struct wl_registry_listener registry_listener = {
+    global_registry_handler,
+    global_registry_remover
+};
+
+
+static void
+redraw(void *data, struct wl_callback *callback, uint32_t time) {
+    printf("Redrawing\n");
+}
+
+static const struct wl_callback_listener frame_listener = {
+    redraw
+};
+
+static void
+configure_callback(void *data, struct wl_callback *callback, uint32_t  time)
+{
+    if (callback == NULL)
+	redraw(data, NULL, time);
+}
+
+static struct wl_callback_listener configure_callback_listener = {
+    configure_callback,
+};
+
+static void
+create_window() {
+    egl_window = wl_egl_window_create(surface,
+				      480, 360);
+    if (egl_window == EGL_NO_SURFACE) {
+	fprintf(stderr, "Can't create egl window\n");
+	exit(1);
+    } else {
+	fprintf(stderr, "Created egl window\n");
+    }
+
+    egl_surface =
+	eglCreateWindowSurface(egl_display,
+			       egl_conf,
+			       egl_window, NULL);
+
+    if (eglMakeCurrent(egl_display, egl_surface,
+		       egl_surface, egl_context)) {
+	fprintf(stderr, "Made current\n");
+    } else {
+	fprintf(stderr, "Made current failed\n");
+    }
+    
+    glClearColor(1.0, 1.0, 0.0, 0.1);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glFlush();
+    
+
+    if (eglSwapBuffers(egl_display, egl_surface)) {
+	fprintf(stderr, "Swapped buffers\n");
+    } else {
+	fprintf(stderr, "Swapped buffers failed\n");
+    }
+    wl_display_dispatch(display);
+    wl_display_roundtrip(display);
+}
+
+
+static void
+handle_ping(void *data, struct wl_shell_surface *shell_surface,
+	    uint32_t serial)
+{
+    wl_shell_surface_pong(shell_surface, serial);
+    fprintf(stderr, "Pinged and ponged\n");
+}
+
+static void
+handle_configure(void *data, struct wl_shell_surface *shell_surface,
+		 uint32_t edges, int32_t width, int32_t height)
+{
+}
+
+static void
+handle_popup_done(void *data, struct wl_shell_surface *shell_surface)
+{
+}
+
+static const struct wl_shell_surface_listener shell_surface_listener = {
+    handle_ping,
+    handle_configure,
+    handle_popup_done
+};
+
+
+static void
+init_egl() {
+    EGLint major, minor, count, n, size;
+    EGLConfig *configs;
+    EGLBoolean ret;
+    int i;
+    EGLint config_attribs[] = {
+	EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
+	EGL_RED_SIZE, 8,
+	EGL_GREEN_SIZE, 8,
+	EGL_BLUE_SIZE, 8,
+	EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
+	EGL_NONE
+    };
+
+    static const EGLint context_attribs[] = {
+	EGL_CONTEXT_CLIENT_VERSION, 2,
+	EGL_NONE
+    };
+
+    
+    egl_display = eglGetDisplay((EGLNativeDisplayType) display);
+    if (egl_display == EGL_NO_DISPLAY) {
+	fprintf(stderr, "Can't create egl display\n");
+	exit(1);
+    } else {
+	fprintf(stderr, "Created egl display\n");
+    }
+
+    if (eglInitialize(egl_display, &major, &minor) != EGL_TRUE) {
+	fprintf(stderr, "Can't initialise egl display\n");
+	exit(1);
+    }
+    printf("EGL major: %d, minor %d\n", major, minor);
+
+    if (! eglBindAPI(EGL_OPENGL_ES_API)) {
+	fprintf(stderr, "Can't bind API\n");
+	exit(1);
+    } else {
+	fprintf(stderr, "Bound API\n");
+    }
+
+    eglGetConfigs(egl_display, NULL, 0, &count);
+    printf("EGL has %d configs\n", count);
+
+    configs = calloc(count, sizeof *configs);
+    
+    ret = eglChooseConfig(egl_display, config_attribs,
+			  configs, count, &n);
+    
+    for (i = 0; i < n; i++) {
+	eglGetConfigAttrib(egl_display,
+			   configs[i], EGL_BUFFER_SIZE, &size);
+	printf("Buffer size for config %d is %d\n", i, size);
+	eglGetConfigAttrib(egl_display,
+			   configs[i], EGL_RED_SIZE, &size);
+	printf("Red size for config %d is %d\n", i, size);
+	
+	egl_conf = configs[i];
+	break;
+    }
+
+    egl_context =
+	eglCreateContext(egl_display,
+			 egl_conf,
+			 EGL_NO_CONTEXT, context_attribs);
+
+}
+
+int main(int argc, char **argv) {
+
+    display = wl_display_connect(NULL);
+    if (display == NULL) {
+	fprintf(stderr, "Can't connect to display\n");
+	exit(1);
+    }
+    printf("connected to display\n");
+
+    struct wl_registry *registry = wl_display_get_registry(display);
+    wl_registry_add_listener(registry, &registry_listener, NULL);
+
+    wl_display_dispatch(display);
+    wl_display_roundtrip(display);
+
+    if (compositor == NULL) {
+	fprintf(stderr, "Can't find compositor\n");
+	exit(1);
+    } else {
+	fprintf(stderr, "Found compositor\n");
+    }
+
+    surface = wl_compositor_create_surface(compositor);
+    if (surface == NULL) {
+	fprintf(stderr, "Can't create surface\n");
+	exit(1);
+    } else {
+	fprintf(stderr, "Created surface %p\n", surface);
+    }
+
+    shell_surface = wl_shell_get_shell_surface(shell, surface);
+    wl_shell_surface_set_toplevel(shell_surface);
+
+    
+    wl_shell_surface_add_listener(shell_surface,
+				  &shell_surface_listener, NULL);
+
+    init_egl();
+    create_window();
+
+    callback = wl_display_sync(display);
+    wl_callback_add_listener(callback, &configure_callback_listener,
+			     NULL);
+
+    while (wl_display_dispatch(display) != -1) {
+	;
+    }
+
+    wl_display_disconnect(display);
+    printf("disconnected from display\n");
+    
+    exit(0);
 }
