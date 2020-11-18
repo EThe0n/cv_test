@@ -1,4 +1,4 @@
-// gcc -o test init_window.c -I. -lwayland-client -lwayland-server -lwayland-client-protocol -lwayland-egl -lEGL -lGLESv2
+// gcc -o test init_window.c -I. -lwayland-client -lwayland-server -lwayland-egl -lEGL -lGLESv2
 #include <wayland-client.h>
 #include <wayland-server.h>
 #include <wayland-client-protocol.h>
