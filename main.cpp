@@ -1,11 +1,12 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <opencv2/opencv.hpp>
 using namespace cv;
 int main(int argc, char** argv )
 {
     if (argc < 2) {
         printf("not enough argument\n");
-        exit(1);
+        exit(EXIT_FAILURE);
     }
 
     //file load
@@ -16,7 +17,7 @@ int main(int argc, char** argv )
     if (!capture.isOpened())
     {
         printf("AVI file can not open.\n");
-        return;
+        exit(EXIT_FAILURE);
     }
 
     //create window
